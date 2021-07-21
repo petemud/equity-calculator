@@ -50,35 +50,35 @@ constexpr int nodes(int players) {
 
 // Number of frequency variables x for a given number of players
 constexpr int vars(int players) {
-	return nodes(players) * ranges + 1;
+	return nodes(players) * ranges;
 }
 
 template<int cur = 0, int players = 2, typename Scalar>
-Scalar game_value(const Eigen::Matrix<Scalar, vars(players), 1> &X) {
+Scalar game_value(const Eigen::Matrix<Scalar, vars(players), 1> &X, const Scalar &P) {
 	constexpr Scalar SMALL_BLIND = 1;
 	constexpr Scalar BIG_BLIND = SMALL_BLIND*2;
-	// P is the last variable
-	auto P = X(X.size() - 1);
 	// The stack of a single player (must be >= BB)
 	auto stack = P + BIG_BLIND;
 	Scalar result = 0;
 	nested_loops<ranges, players>([&](auto player_range) {
+		Scalar times_val = times<players>(player_range);
+		if (times_val == 0)
+			return;
 		for (int mask = 1, max_mask = 1 << players; mask < max_mask; ++mask) {
-			Scalar prob = times<players>(player_range);
+			Scalar prob = times_val;
 			Scalar pot = 0;
-			int node = 0;
 			std::array<int, players> betting, folding;
 			int nbetting = 0, nfolding = 0;
-			for (int player = 0; player < players; ++player) {
-				auto x = X(player_range[player] * nodes(players) + node);
+			for (int node = 0, player = 0; player < players; ++player) {
+				auto x = X(node * ranges + player_range[player]);
 				if ((mask >> player) & 1) {
-					prob *= x;
 					node = node * 2 + 1;
+					prob *= x;
 					pot += stack;
 					betting[nbetting++] = player;
 				} else {
-					prob *= 1 - x;
 					node = node * 2 + 2;
+					prob *= 1 - x;
 					if (player == players - 1)
 						pot += BIG_BLIND;
 					if (player == players - 2)
@@ -93,17 +93,16 @@ Scalar game_value(const Eigen::Matrix<Scalar, vars(players), 1> &X) {
 					std::array<int, players> equity_index;
 					int i = 0;
 					equity_index[i++] = player_range[cur];
-					int ibetting = nbetting;
+					int ibetting = nbetting, ifolding = nfolding;
 					// First go betting players
 					while (ibetting--) {
-						int player = betting[ibetting];
-						if (player != cur)
-							equity_index[i++] = player_range[player];
+						if (betting[ibetting] == cur)
+							continue;
+						equity_index[i++] = player_range[betting[ibetting]];
 					}
 					// And then folding ones
-					while (nfolding--) {
-						int player = folding[nfolding];
-						equity_index[i++] = player_range[player];
+					while (ifolding--) {
+						equity_index[i++] = player_range[folding[ifolding]];
 					}
 					Scalar equity_val = equity<players>(nbetting, equity_index);
 					result += prob * (pot * equity_val - stack);
@@ -120,31 +119,31 @@ Scalar game_value(const Eigen::Matrix<Scalar, vars(players), 1> &X) {
 }
 
 template<int players = 2, typename Scalar>
-Scalar regularized(const Eigen::Matrix<Scalar, vars(players), 1> &X) {
+Eigen::Matrix<Scalar, vars(players), 1> regularized(const Eigen::Matrix<Scalar, vars(players), 1> &X, const Scalar &P) {
 	constexpr Scalar SMALL_BLIND = 1;
 	constexpr Scalar BIG_BLIND = SMALL_BLIND*2;
-	// P is the last variable
-	auto P = X(X.size() - 1);
 	// The stack of a single player (must be >= BB)
 	auto stack = P + BIG_BLIND;
-	Scalar result = 0;
+	Eigen::Matrix<Scalar, vars(players), 1> f = decltype(f)::Zero();
 	nested_loops<ranges, players>([&](auto player_range) {
+		Scalar times_val = times<players>(player_range);
+		if (times_val == 0)
+			return;
 		for (int mask = 1, max_mask = 1 << players; mask < max_mask; ++mask) {
-			Scalar prob = times<players>(player_range);
+			Scalar prob = times_val;
 			Scalar pot = 0;
-			int node = 0;
 			std::array<int, players> betting, folding;
 			int nbetting = 0, nfolding = 0;
-			for (int player = 0; player < players; ++player) {
-				auto x = X(player_range[player] * nodes(players) + node);
+			for (int node = 0, player = 0; player < players; ++player) {
+				auto x = X(node * ranges + player_range[player]);
 				if ((mask >> player) & 1) {
-					prob *= x;
 					node = node * 2 + 1;
+					prob *= x;
 					pot += stack;
 					betting[nbetting++] = player;
 				} else {
-					prob *= 1 - x;
 					node = node * 2 + 2;
+					prob *= 1 - x;
 					if (player == players - 1)
 						pot += BIG_BLIND;
 					if (player == players - 2)
@@ -152,37 +151,45 @@ Scalar regularized(const Eigen::Matrix<Scalar, vars(players), 1> &X) {
 					folding[nfolding++] = player;
 				}
 			}
-			// if ((mask >> cur) & 1) {
-			// 	if (nbetting == 1) {
-			// 		result += prob * (pot - stack);
-			// 	} else {
-			// 		std::array<int, players> equity_index;
-			// 		int i = 0;
-			// 		equity_index[i++] = player_range[cur];
-			// 		int ibetting = nbetting;
-			// 		// First go betting players
-			// 		while (ibetting--) {
-			// 			int player = betting[ibetting];
-			// 			if (player != cur)
-			// 				equity_index[i++] = player_range[player];
-			// 		}
-			// 		// And then folding ones
-			// 		while (nfolding--) {
-			// 			int player = folding[nfolding];
-			// 			equity_index[i++] = player_range[player];
-			// 		}
-			// 		Scalar equity_val = equity<players>(nbetting, equity_index);
-			// 		result += prob * (pot * equity_val - stack);
-			// 	}
-			// } else {
-			// 	if (cur == players - 1)
-			// 		result -= BIG_BLIND * prob;
-			// 	if (cur == players - 2)
-			// 		result -= SMALL_BLIND * prob;
-			// }
+			for (int node = 0, player = 0; player < players; ++player) {
+				auto range = player_range[player];
+				auto x = X(node * ranges + range);
+				auto &result = f(node * ranges + range);
+				if ((mask >> player) & 1) {
+					node = node * 2 + 1;
+					if (nbetting == 1) {
+						result += prob / x * (pot - stack);
+					} else {
+						std::array<int, players> equity_index;
+						int i = 0;
+						equity_index[i++] = range;
+						int ibetting = nbetting, ifolding = nfolding;
+						// First go betting players
+						while (ibetting--) {
+							if (betting[ibetting] == player)
+								continue;
+							equity_index[i++] = player_range[betting[ibetting]];
+						}
+						// And then folding ones
+						while (ifolding--) {
+							equity_index[i++] = player_range[folding[ifolding]];
+						}
+						Scalar equity_val = equity<players>(nbetting, equity_index);
+						result += prob / x * (pot * equity_val - stack);
+					}
+				} else {
+					node = node * 2 + 2;
+					if (player == players - 1)
+						result -= prob / (1 - x) * BIG_BLIND;
+					if (player == players - 2)
+						result -= prob / (1 - x) * SMALL_BLIND;
+				}
+			}
 		}
 	});
-	return result / ((52*51/2) * (50*49/2));
+	f /= ((52*51/2) * (50*49/2));
+//	f *= 1e9;
+	return atan(f.array()) / EIGEN_PI + .5;
 }
 
 #include <random>
@@ -202,14 +209,11 @@ int main()
 	X = decltype(X)::NullaryExpr([&]() {
 		return distribution(generator);
 	});
-	X(X.size() - 1) = 0;
-	std::cout << "E1 = " << game_value<0>(X) << "\n";
-	std::cout << "E2 = " << game_value<1>(X) << "\n";
-	Eigen::Matrix<double, vars(2), 1> X2 = X.cast<double>();
-	std::cout << "E1 = " << game_value<0>(X2) << "\n";
-	std::cout << "E2 = " << game_value<1>(X2) << "\n";
-	Eigen::Matrix<long double, vars(2), 1> X3 = X.cast<long double>();
-	std::cout << "E1 = " << game_value<0>(X3) << "\n";
-	std::cout << "E2 = " << game_value<1>(X3) << "\n";
+	Scalar P = 20;
+	std::cout << "E1 = " << game_value<0>(X, P) << "\n";
+	std::cout << "E2 = " << game_value<1>(X, P) << "\n";
+	std::cout << "f = " << regularized(X, P) << "\n";
+	auto f = regularized(X, P);
+	std::cout << "f(last) = " << f(f.size() - 1) << "\n";
 }
 
