@@ -44,23 +44,24 @@ uint16_t times(std::array<int, players> player_range) {
 }
 
 // Number of game tree nodes for a given number of players
-constexpr int nodes(int players) {
-	return (1 << players) - 1;
-}
+template<int players = 2>
+constexpr int nodes = (1 << players) - 1;
 
 // Number of frequency variables x for a given number of players
-constexpr int vars(int players) {
-	return nodes(players) * ranges;
-}
+template<int players = 2>
+constexpr int vars = nodes<players> * ranges + 1;
+
+template<int players = 2>
+constexpr int P_pos = vars<players> - 1;
 
 template<typename Scalar, int players = 2>
-using parameter_t = Eigen::Matrix<Scalar, vars(players), 1>;
+using parameter_t = Eigen::Matrix<Scalar, vars<players>, 1>;
 
 template<typename Scalar, int players = 2>
 using value_t = Eigen::Matrix<Scalar, players, 1>;
 
 template<typename Scalar, int players = 2>
-using derivative_t = Eigen::Matrix<Scalar, vars(players), 1>;
+using derivative_t = Eigen::Matrix<Scalar, vars<players>, 1>;
 
 template<typename Scalar, int players = 2>
 using jacobian_t = Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic>;
@@ -68,23 +69,25 @@ using jacobian_t = Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic>;
 template<int players = 2, typename Scalar>
 void game_value(
 	const parameter_t<Scalar, players> &X,
-	const Scalar &P,
+	const Scalar &e,
+	std::array<parameter_t<Scalar, players>, 2> *X_prev,
+	const Scalar &delta,
 	value_t<Scalar, players> *value,
-	derivative_t<Scalar, players> *derivative,
-	jacobian_t<Scalar, players> *jacobian,
-	const Scalar &e = 1
+	derivative_t<Scalar, players> *derivative = nullptr,
+	jacobian_t<Scalar, players> *jacobian = nullptr
 ) {
 	constexpr Scalar SMALL_BLIND = 1;
 	constexpr Scalar BIG_BLIND = SMALL_BLIND*2;
 	Scalar prob;
 	std::array<Scalar, players> dprob;
 	std::array<decltype(dprob), players> ddprob;
+	auto P = X(P_pos<players>);
 	// The stack of a single player (must be >= BB)
 	auto stack = P + BIG_BLIND;
 	std::unique_ptr<derivative_t<Scalar, players>> temp_derivative;
 	if (value)
 		value->setConstant(0);
-	if (derivative) {
+	if (derivative || jacobian) {
 		temp_derivative = std::make_unique<derivative_t<Scalar, players>>();
 		temp_derivative->setConstant(0);
 	}
@@ -99,6 +102,7 @@ void game_value(
 			prob = times_val;
 			dprob.fill(times_val);
 			ddprob.fill(dprob);
+			Scalar dP = 0;
 			Scalar pot = 0;
 			std::array<int, players> betting, folding;
 			int nbetting = 0, nfolding = 0;
@@ -142,10 +146,11 @@ void game_value(
 			}
 			for (int player = 0; player < players; ++player) {
 				auto id = player_node[player] * ranges + player_range[player];
-				Scalar stack_delta = 0;
+				Scalar value_delta = 0;
+				Scalar dP = 0;
 				if ((mask >> player) & 1) {
 					if (nbetting == 1) {
-						stack_delta = pot - stack;
+						value_delta = pot - stack;
 					} else {
 						std::array<int, players> equity_index;
 						int i = 0;
@@ -162,46 +167,59 @@ void game_value(
 							equity_index[i++] = player_range[folding[ifolding]];
 						}
 						Scalar equity_val = equity<players>(nbetting, equity_index);
-						stack_delta = pot * equity_val - stack;
+						value_delta = pot * equity_val - stack;
+						dP = nbetting * equity_val - 1;
 					}
 				} else {
 					if (player == players - 1)
-						stack_delta = -BIG_BLIND;
+						value_delta = -BIG_BLIND;
 					if (player == players - 2)
-						stack_delta = -SMALL_BLIND;
+						value_delta = -SMALL_BLIND;
 				}
-				if (stack_delta == 0) continue;
+				if (dP != 0) {
+					if (X_prev && jacobian) {
+						jacobian->coeffRef(id, P_pos<players>) += dprob[player] * dP;
+					}
+				}
+				if (value_delta == 0) continue;
 				if (value)
-					value->coeffRef(player) += prob * stack_delta;
+					value->coeffRef(player) += prob * value_delta;
 				if (derivative || jacobian)
-					temp_derivative->coeffRef(id) += dprob[player] * stack_delta;
+					temp_derivative->coeffRef(id) += dprob[player] * value_delta;
 				if (jacobian)
 					for (int player2 = 0; player2 < players; ++player2) {
 						if (player2 == player) continue;
 						auto id2 = player_node[player2] * ranges + player_range[player2];
-						jacobian->coeffRef(id, id2) += ddprob[player][player2] * stack_delta;
+						jacobian->coeffRef(id, id2) += ddprob[player][player2] * value_delta;
 					}
 			}
 		}
 	});
-	if (derivative || jacobian)
+	if (derivative || jacobian) {
 		*temp_derivative *= e;
-	if (derivative)
-		*derivative = temp_derivative->array().atan() * Scalar(1 / EIGEN_PI) + Scalar(.5) - X.array();
-	if (jacobian) {	
-		*temp_derivative = (temp_derivative->array().square() + 1).inverse() * Scalar(e / EIGEN_PI);
-		for (int i = 0; i < vars(players); ++i) {
-			jacobian->row(i) *= temp_derivative->coeffRef(i);
-			jacobian->coeffRef(i, i) = -1;
+		if (derivative) {
+			*derivative = temp_derivative->array().atan() * Scalar(1 / EIGEN_PI) + Scalar(.5) - X.array();
+			if (!X_prev) {
+				derivative->coeffRef(P_pos<players>) = 0;
+			}
+		}
+		if (jacobian) {	
+			*temp_derivative = (temp_derivative->array().square() + 1).inverse() * Scalar(e / EIGEN_PI);
+			for (int i = 0; i < vars<players> - 1; ++i) {
+				jacobian->row(i) *= temp_derivative->coeffRef(i);
+				jacobian->coeffRef(i, i) = -1;
+			}
+		}
+		if (X_prev) {
+			auto &Xp = *X_prev;
+			parameter_t<Scalar, 2> dX = Xp[0] - Xp[1];
+			dX.normalize();
+			if (derivative) {
+				derivative->coeffRef(P_pos<players>) = (X - Xp[0]).dot(dX) - delta;
+			}
+			if (jacobian) {
+				jacobian->row(P_pos<players>) = dX;
+			}
 		}
 	}
 }
-
-extern template void game_value<2, double>(
-	const parameter_t<double, 2> &X,
-	const double &P,
-	value_t<double, 2> *value,
-	derivative_t<double, 2> *derivative,
-	jacobian_t<double, 2> *jacobian,
-	const double &e
-);
