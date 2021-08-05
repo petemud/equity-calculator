@@ -94,7 +94,7 @@ void game_value(
 	if (jacobian)
 		jacobian->setConstant(0);
 	nested_loops<ranges, players>([&](auto player_range) {
-		// Scalar times_val = times<players>(player_range) * (1 / Scalar((52*51/2) * (50*49/2)));
+		//Scalar times_val = times<players>(player_range) * (1 / Scalar((52*51/2) * (50*49/2)));
 		Scalar times_val = times<players>(player_range);
 		if (times_val == 0)
 			return;
