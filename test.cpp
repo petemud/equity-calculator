@@ -10,7 +10,7 @@
 
 int main()
 {
-	std::cout.precision(std::numeric_limits<long double>::max_digits10);
+	std::cout.precision(std::numeric_limits<float>::max_digits10);
 
 	using Scalar = double;
 	parameter_t<Scalar, 2> X;
@@ -55,9 +55,9 @@ int main()
 			std::cout << "norm = " << f.norm() << "\n";
 			std::cout << "e = " << e << "\n";
 			X = saved;
-			if (times * .9 <= 1) break;
+			times *= .5;
+			if (times <= 1) break;
 			e = last_e;
-			times *= .9;
 			e *= times;
 		} else {
 			std::cout << "norm = " << f.norm() << "\n";

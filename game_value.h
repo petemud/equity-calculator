@@ -78,7 +78,7 @@ void game_value(
 ) {
 	constexpr Scalar BIG_BLIND = 1;
 	constexpr Scalar SMALL_BLIND = BIG_BLIND*.5;
-	constexpr Scalar JACK_POT = Scalar(687.52) / (50*49*48/5/4/3);
+	constexpr Scalar JACK_POT = Scalar(757) / (50*49*48/5/4/3);
 	Scalar prob;
 	std::array<Scalar, players> dprob;
 	std::array<decltype(dprob), players> ddprob;
@@ -147,10 +147,11 @@ void game_value(
 			}
 			for (int player = 0; player < players; ++player) {
 				auto id = player_node[player] * ranges + player_range[player];
-				Scalar value_delta = -.1 * BIG_BLIND;
+				Scalar value_delta = -.05 * BIG_BLIND;
 				Scalar dP = 0;
 				if ((mask >> player) & 1) {
 					if (nbetting > 1) {
+						value_delta -= .05 * BIG_BLIND;
 						auto rank1 = player_range[player] / 13;
 						auto rank2 = player_range[player] % 13;
 						if (rank2 == 12) {
