@@ -76,14 +76,15 @@ void game_value(
 	derivative_t<Scalar, players> *derivative = nullptr,
 	jacobian_t<Scalar, players> *jacobian = nullptr
 ) {
-	constexpr Scalar SMALL_BLIND = 1;
-	constexpr Scalar BIG_BLIND = SMALL_BLIND*2;
+	constexpr Scalar BIG_BLIND = 1;
+	constexpr Scalar SMALL_BLIND = BIG_BLIND*.5;
+	constexpr Scalar JACK_POT = Scalar(687.52) / (50*49*48/5/4/3);
 	Scalar prob;
 	std::array<Scalar, players> dprob;
 	std::array<decltype(dprob), players> ddprob;
 	auto P = X(P_pos<players>);
 	// The stack of a single player (must be >= BB)
-	auto stack = P + BIG_BLIND;
+	auto stack = P;
 	std::unique_ptr<derivative_t<Scalar, players>> temp_derivative;
 	if (value)
 		value->setConstant(0);
@@ -146,11 +147,27 @@ void game_value(
 			}
 			for (int player = 0; player < players; ++player) {
 				auto id = player_node[player] * ranges + player_range[player];
-				Scalar value_delta = 0;
+				Scalar value_delta = -.1 * BIG_BLIND;
 				Scalar dP = 0;
 				if ((mask >> player) & 1) {
+					if (nbetting > 1) {
+						auto rank1 = player_range[player] / 13;
+						auto rank2 = player_range[player] % 13;
+						if (rank2 == 12) {
+							if (11 >= rank1 && rank1 >= 8) value_delta += 1 * JACK_POT;
+							if (3 >= rank1 && rank1 >= 0) value_delta += 1 * JACK_POT;
+						} else if (rank2 > rank1 && rank2 - rank1 <= 4) {
+							if (rank2 == 11 && rank1 >= 9 || rank1 == 0 && rank2 <= 2) {
+								value_delta += 2 * JACK_POT;
+							} else if (rank2 == 10 && rank1 >= 9 || rank1 == 1 && rank2 <= 2) {
+								value_delta += 3 * JACK_POT;
+							} else {
+								value_delta += (5 - (rank2 - rank1)) * JACK_POT;
+							}
+						}
+					}
 					if (nbetting == 1) {
-						value_delta = pot - stack;
+						value_delta += pot - stack;
 					} else {
 						std::array<int, players> equity_index;
 						int i = 0;
@@ -167,14 +184,14 @@ void game_value(
 							equity_index[i++] = player_range[folding[ifolding]];
 						}
 						Scalar equity_val = equity<players>(nbetting, equity_index);
-						value_delta = pot * equity_val - stack;
+						value_delta += pot * equity_val - stack;
 						dP = nbetting * equity_val - 1;
 					}
 				} else {
 					if (player == players - 1)
-						value_delta = -BIG_BLIND;
+						value_delta -= BIG_BLIND;
 					if (player == players - 2)
-						value_delta = -SMALL_BLIND;
+						value_delta -= SMALL_BLIND;
 				}
 				if (dP != 0) {
 					if (X_prev && jacobian) {
